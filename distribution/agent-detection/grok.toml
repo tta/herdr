@@ -1,7 +1,7 @@
 id = "grok"
-version = "2026.10.05.1"
+version = "2026.10.13.1"
 min_engine_version = 3
-updated_at = "2026-10-05T00:00:00Z"
+updated_at = "2026-10-13T00:00:00Z"
 aliases = ["grok-build"]
 
 # Evidence: Grok Build 0.2.101 source and 1.0.34 live pane reads.
@@ -27,7 +27,18 @@ aliases = ["grok-build"]
 # or "Esc:unselect │ Tab:scrollback │ Shift+x:dismiss" (question dialog).
 # Idle footers end with "Ctrl+.:shortcuts" and never contain "Esc:cancel".
 # The startup splash draws its logo with braille characters, so working
-# rules must anchor on the [stop] chip, not on a bare spinner glyph.
+# rules must anchor on the [stop] chip or an activity phrase, not on a
+# bare spinner glyph.
+#
+# `grok --minimal` (Grok Build 1.0.53) keeps the OSC title at "grok" for
+# the whole turn and does not emit OSC 9 progress. Its live status line
+# has the braille spinner and a duration, without the [stop] chip:
+#   "⠋ Waiting for response… 0.1s                          0.1s ⇣1.30k"
+#   "⠼ Thinking… 0.0s                                      1.6s ⇣1.41k"
+#   "⠼ Responding… 0.0s                                    1.6s ⇣12.6k"
+#   "⠋ Starting session… 0.0s"
+# That line has to outrank the idle "grok" title. The minimal footer is
+# "ctrl+o transcript", not "Ctrl+.:shortcuts".
 
 [[rules]]
 id = "osc_title_blocked"
@@ -122,7 +133,13 @@ state = "working"
 priority = 1160
 region = "whole_recent"
 visible_working = true
-line_regex = ['^\s*[\x{2801}-\x{28FF}]\s.*\[stop\]\s*$']
+# Fullscreen ends the status line with [stop]. Minimal mode omits that chip
+# and leaves the OSC title idle, so the spinner-plus-duration line is the
+# working signal and must outrank osc_title_idle.
+any = [
+  { line_regex = ['^\s*[\x{2801}-\x{28FF}]\s.*\[stop\]\s*$'] },
+  { line_regex = ['^\s*[\x{2801}-\x{28FF}]\s+\S.*…[ \t]+\d+(?:\.\d+)?s\b'] },
+]
 
 [[rules]]
 id = "esc_cancel_hints_working"
