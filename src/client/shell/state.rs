@@ -816,6 +816,31 @@ pub(super) struct ClientCopySearchPrompt {
     pub(super) query: TextEditor,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientCopyFindMotion {
+    To,
+    Till,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientCopyFindDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ClientCopyFindPrompt {
+    pub(super) motion: ClientCopyFindMotion,
+    pub(super) direction: ClientCopyFindDirection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ClientCopyFind {
+    pub(super) needle: char,
+    pub(super) motion: ClientCopyFindMotion,
+    pub(super) direction: ClientCopyFindDirection,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ClientCopyOperation {
     Motion(crate::api::schema::PaneCopyMotion),
@@ -846,6 +871,8 @@ pub(super) struct ClientCopyModeState {
     pub(super) entry_offset_from_bottom: usize,
     pub(super) selection: Option<ClientCopySelection>,
     pub(super) search_prompt: Option<ClientCopySearchPrompt>,
+    pub(super) find_prompt: Option<ClientCopyFindPrompt>,
+    pub(super) last_find: Option<ClientCopyFind>,
     pub(super) search_query: String,
     pub(super) search_direction: Option<crate::api::schema::PaneCopySearchDirection>,
     pub(super) search_matches: Vec<crate::api::schema::PaneTextRange>,

@@ -94,6 +94,8 @@ impl ClientShellState {
             entry_offset_from_bottom: metrics.offset_from_bottom,
             selection: None,
             search_prompt: None,
+            find_prompt: None,
+            last_find: None,
             search_query: String::new(),
             search_direction: None,
             search_matches: Vec::new(),
@@ -112,6 +114,9 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) {
+        if self.route_copy_find_prompt_key(key, outcome) {
+            return;
+        }
         if self.route_copy_search_prompt_key(key, outcome) {
             return;
         }
@@ -226,6 +231,24 @@ impl ClientShellState {
             'H' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Top, outcome),
             'M' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Middle, outcome),
             'L' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Bottom, outcome),
+            'f' => self.open_copy_find(
+                ClientCopyFindMotion::To,
+                ClientCopyFindDirection::Forward,
+            ),
+            'F' => self.open_copy_find(
+                ClientCopyFindMotion::To,
+                ClientCopyFindDirection::Backward,
+            ),
+            't' => self.open_copy_find(
+                ClientCopyFindMotion::Till,
+                ClientCopyFindDirection::Forward,
+            ),
+            'T' => self.open_copy_find(
+                ClientCopyFindMotion::Till,
+                ClientCopyFindDirection::Backward,
+            ),
+            ';' => self.repeat_copy_find(false, outcome),
+            ',' => self.repeat_copy_find(true, outcome),
             '0' => {
                 self.set_copy_cursor_col(0);
                 self.sync_copy_selection();
@@ -269,6 +292,158 @@ impl ClientShellState {
             _ => return,
         }
         outcome.repaint = true;
+    }
+
+    fn route_copy_find_prompt_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        if self
+            .copy_mode
+            .as_ref()
+            .is_none_or(|copy_mode| copy_mode.find_prompt.is_none())
+        {
+            return false;
+        }
+        if key.code == KeyCode::Esc {
+            if let Some(copy_mode) = self.copy_mode.as_mut() {
+                copy_mode.find_prompt = None;
+            }
+            outcome.repaint = true;
+            return true;
+        }
+        let Some(needle) = crate::copy_mode::copy_mode_command_char(key.clone()) else {
+            if let Some(copy_mode) = self.copy_mode.as_mut() {
+                copy_mode.find_prompt = None;
+            }
+            outcome.repaint = true;
+            return true;
+        };
+        let Some(prompt) = self
+            .copy_mode
+            .as_mut()
+            .and_then(|copy_mode| copy_mode.find_prompt.take())
+        else {
+            return true;
+        };
+        if let Some(copy_mode) = self.copy_mode.as_mut() {
+            copy_mode.last_find = Some(ClientCopyFind {
+                needle,
+                motion: prompt.motion,
+                direction: prompt.direction,
+            });
+        }
+        self.apply_copy_find(
+            needle,
+            prompt.direction == ClientCopyFindDirection::Forward,
+            prompt.motion == ClientCopyFindMotion::Till,
+            false,
+            outcome,
+        );
+        outcome.repaint = true;
+        true
+    }
+
+    fn open_copy_find(
+        &mut self,
+        motion: ClientCopyFindMotion,
+        direction: ClientCopyFindDirection,
+    ) {
+        let Some(copy_mode) = self.copy_mode.as_mut() else {
+            return;
+        };
+        copy_mode.find_prompt = Some(ClientCopyFindPrompt { motion, direction });
+    }
+
+    fn repeat_copy_find(&mut self, reverse: bool, outcome: &mut ClientShellInput) {
+        let Some(find) = self.copy_mode.as_ref().and_then(|copy_mode| copy_mode.last_find) else {
+            return;
+        };
+        let forward = match find.direction {
+            ClientCopyFindDirection::Forward => !reverse,
+            ClientCopyFindDirection::Backward => reverse,
+        };
+        self.apply_copy_find(
+            find.needle,
+            forward,
+            find.motion == ClientCopyFindMotion::Till,
+            true,
+            outcome,
+        );
+    }
+
+    fn apply_copy_find(
+        &mut self,
+        needle: char,
+        forward: bool,
+        till: bool,
+        repeat: bool,
+        outcome: &mut ClientShellInput,
+    ) {
+        let Some(symbols) = self.copy_find_line_symbols() else {
+            return;
+        };
+        let Some(cursor_col) = self.copy_mode.as_ref().map(|copy_mode| copy_mode.cursor.col) else {
+            return;
+        };
+        let glyphs = crate::copy_mode::copy_find_glyphs(&symbols);
+        let Some(col) =
+            crate::copy_mode::copy_find_char_col(&glyphs, cursor_col, needle, forward, till, repeat)
+        else {
+            return;
+        };
+        self.set_copy_cursor_col(col);
+        self.sync_copy_selection();
+        outcome.repaint = true;
+    }
+
+    fn copy_find_line_symbols(&self) -> Option<Vec<String>> {
+        let copy_mode = self.copy_mode.as_ref()?;
+        let surface = self.pane_surface.as_ref()?;
+        let pane = surface
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == copy_mode.pane_id)?;
+        if pane.content_revision != copy_mode.content_revision {
+            return None;
+        }
+        let offset = pane
+            .scroll
+            .map(|scroll| scroll.offset_from_bottom)
+            .unwrap_or(0);
+        let max_offset = pane
+            .scroll
+            .map(|scroll| scroll.max_offset_from_bottom)
+            .unwrap_or(0);
+        if usize::try_from(offset).ok()? != copy_mode.offset_from_bottom
+            || usize::try_from(max_offset).ok()? != copy_mode.max_offset_from_bottom
+        {
+            return None;
+        }
+        let top = max_offset.saturating_sub(offset);
+        let row = u64::from(copy_mode.cursor.row);
+        if row < top {
+            return None;
+        }
+        let local = row - top;
+        if local >= u64::from(pane.inner_rect.height) {
+            return None;
+        }
+        let y = pane
+            .inner_rect
+            .y
+            .saturating_add(u16::try_from(local).ok()?);
+        let x = pane.inner_rect.x;
+        let width = pane.inner_rect.width;
+        let frame_width = usize::from(surface.frame.width);
+        if frame_width == 0 || usize::from(y) >= usize::from(surface.frame.height) {
+            return None;
+        }
+        let start = usize::from(y) * frame_width + usize::from(x);
+        let end = start.saturating_add(usize::from(width));
+        let row = surface.frame.cells.get(start..end)?;
+        Some(row.iter().map(|cell| cell.symbol.clone()).collect())
     }
 
     fn route_copy_search_prompt_key(

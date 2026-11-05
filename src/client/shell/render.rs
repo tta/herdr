@@ -123,7 +123,22 @@ pub(super) fn render_mode_bar(
             }
             ClientShellMode::Copy => {
                 let copy_mode = copy_mode?;
-                if let Some(prompt) = copy_mode.search_prompt.as_ref() {
+                if let Some(prompt) = copy_mode.find_prompt {
+                    let marker = match (prompt.motion, prompt.direction) {
+                        (ClientCopyFindMotion::To, ClientCopyFindDirection::Forward) => "f",
+                        (ClientCopyFindMotion::To, ClientCopyFindDirection::Backward) => "F",
+                        (ClientCopyFindMotion::Till, ClientCopyFindDirection::Forward) => "t",
+                        (ClientCopyFindMotion::Till, ClientCopyFindDirection::Backward) => "T",
+                    };
+                    segments.extend([
+                        (" COPY ".to_owned(), mode_style),
+                        (" ".to_owned(), base),
+                        (marker.to_owned(), key),
+                        (" char  ".to_owned(), base),
+                        ("esc".to_owned(), key),
+                        (" cancel".to_owned(), base),
+                    ]);
+                } else if let Some(prompt) = copy_mode.search_prompt.as_ref() {
                     let marker = match prompt.direction {
                         crate::api::schema::PaneCopySearchDirection::Forward => "/",
                         crate::api::schema::PaneCopySearchDirection::Backward => "?",
@@ -178,7 +193,7 @@ pub(super) fn render_mode_bar(
                     segments.extend([
                         (" COPY ".to_owned(), mode_style),
                         (" ".to_owned(), base),
-                        ("h/j/k/l H/M/L w/b/e { }".to_owned(), key),
+                        ("h/j/k/l H/M/L f/t w/b/e { }".to_owned(), key),
                         (" move  ".to_owned(), base),
                         ("/ ?".to_owned(), key),
                         (" search  ".to_owned(), base),

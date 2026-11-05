@@ -28,6 +28,8 @@ fn pasted_help_and_copy_queries_normalize_single_line_text() {
         max_offset_from_bottom: 0,
         entry_offset_from_bottom: 0,
         selection: None,
+        find_prompt: None,
+        last_find: None,
         search_prompt: Some(ClientCopySearchPrompt {
             direction: crate::api::schema::PaneCopySearchDirection::Forward,
             query: TextEditor::default(),
@@ -533,6 +535,8 @@ fn copy_mode_h_m_l_move_within_the_visible_page() {
         entry_offset_from_bottom: 0,
         selection: None,
         search_prompt: None,
+        find_prompt: None,
+        last_find: None,
         search_query: String::new(),
         search_direction: None,
         search_matches: Vec::new(),
@@ -578,6 +582,110 @@ fn copy_mode_h_m_l_move_within_the_visible_page() {
         let (start, end) = selection.ordered_cells();
         start.0 == 15 && end.0 == 24
     }));
+}
+
+#[test]
+fn copy_mode_find_char_repeats_forward_and_backward() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    let buffer = ratatui::buffer::Buffer::with_lines(["abXcdXef"]);
+    pane_surface.frame =
+        crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
+    pane_surface.panes[0].rect = crate::protocol::SurfaceRect {
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+    };
+    pane_surface.panes[0].inner_rect = pane_surface.panes[0].rect;
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 0,
+        viewport_rows: 1,
+    });
+    state.set_pane_surface(pane_surface);
+    state.mode = ClientShellMode::Copy;
+    state.copy_mode = Some(ClientCopyModeState {
+        pane_id: "pane_1".into(),
+        content_revision: 0,
+        geometry: (8, 1),
+        alternate_screen_active: false,
+        cursor: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 0,
+        entry_offset_from_bottom: 0,
+        selection: None,
+        search_prompt: None,
+        find_prompt: None,
+        last_find: None,
+        search_query: String::new(),
+        search_direction: None,
+        search_matches: Vec::new(),
+        search_total: 0,
+        search_current: None,
+        search_current_global: None,
+        search_generation: 0,
+        copy_after_search: false,
+    });
+
+    let press = |state: &mut ClientShellState, key: KeyCode| {
+        state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            key,
+            KeyModifiers::empty(),
+        ))])
+    };
+    let column = |state: &ClientShellState| {
+        state
+            .copy_mode
+            .as_ref()
+            .map(|mode| mode.cursor.col)
+            .expect("copy mode")
+    };
+
+    press(&mut state, KeyCode::Char('f'));
+    assert!(state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|mode| mode.find_prompt.is_some()));
+    let found = press(&mut state, KeyCode::Char('X'));
+    assert!(found.actions.is_empty());
+    assert_eq!(column(&state), 2);
+    press(&mut state, KeyCode::Char(';'));
+    assert_eq!(column(&state), 5);
+    press(&mut state, KeyCode::Char(','));
+    assert_eq!(column(&state), 2);
+
+    state.copy_mode.as_mut().expect("copy mode").cursor.col = 0;
+    press(&mut state, KeyCode::Char('t'));
+    press(&mut state, KeyCode::Char('X'));
+    assert_eq!(column(&state), 1);
+    press(&mut state, KeyCode::Char(';'));
+    assert_eq!(column(&state), 4);
+    press(&mut state, KeyCode::Char(','));
+    assert_eq!(column(&state), 3);
+
+    state.copy_mode.as_mut().expect("copy mode").cursor.col = 5;
+    press(&mut state, KeyCode::Char('F'));
+    press(&mut state, KeyCode::Char('X'));
+    assert_eq!(column(&state), 2);
+
+    state.copy_mode.as_mut().expect("copy mode").cursor.col = 4;
+    press(&mut state, KeyCode::Char('T'));
+    press(&mut state, KeyCode::Char('X'));
+    assert_eq!(column(&state), 3);
+
+    press(&mut state, KeyCode::Char('f'));
+    press(&mut state, KeyCode::Esc);
+    assert!(state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|mode| mode.find_prompt.is_none()));
+    assert_eq!(column(&state), 3);
+    let missing = press(&mut state, KeyCode::Char('f'));
+    press(&mut state, KeyCode::Char('Z'));
+    assert!(missing.actions.is_empty());
+    assert_eq!(column(&state), 3);
 }
 
 #[test]

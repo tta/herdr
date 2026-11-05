@@ -725,7 +725,9 @@ impl ClientShellState {
                 if self
                     .copy_mode
                     .as_ref()
-                    .is_none_or(|copy_mode| copy_mode.search_prompt.is_none())
+                    .is_none_or(|copy_mode| {
+                        copy_mode.search_prompt.is_none() && copy_mode.find_prompt.is_none()
+                    })
                     && self.config.keybinds.matches_prefix(key)
                 {
                     self.mode = ClientShellMode::Prefix;

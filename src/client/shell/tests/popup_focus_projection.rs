@@ -116,6 +116,8 @@ fn modal_paste_target_requires_a_focused_editable_client_field() {
             direction: crate::api::schema::PaneCopySearchDirection::Forward,
             query: TextEditor::default(),
         }),
+        find_prompt: None,
+        last_find: None,
         search_query: String::new(),
         search_direction: None,
         search_matches: Vec::new(),
