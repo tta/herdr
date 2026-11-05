@@ -1,6 +1,12 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyModifiers};
 
+enum CopyScreenLine {
+    Top,
+    Middle,
+    Bottom,
+}
+
 impl ClientShellState {
     pub(super) fn reset_copy_pipeline(&mut self) {
         self.copy_session_generation = self.copy_session_generation.saturating_add(1);
@@ -217,6 +223,9 @@ impl ClientShellState {
             'l' => self.move_copy_cursor(0, 1, outcome),
             'g' => self.move_copy_history(true, outcome),
             'G' => self.move_copy_history(false, outcome),
+            'H' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Top, outcome),
+            'M' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Middle, outcome),
+            'L' => self.move_copy_cursor_to_screen_line(CopyScreenLine::Bottom, outcome),
             '0' => {
                 self.set_copy_cursor_col(0);
                 self.sync_copy_selection();
@@ -571,6 +580,40 @@ impl ClientShellState {
             return;
         };
         self.push_pane_scroll_offset(pane_id, next_offset, outcome);
+        self.sync_copy_selection();
+        outcome.repaint = true;
+    }
+
+    fn move_copy_cursor_to_screen_line(
+        &mut self,
+        line: CopyScreenLine,
+        outcome: &mut ClientShellInput,
+    ) {
+        let Some(copy_mode) = self.copy_mode.as_mut() else {
+            return;
+        };
+        let height = copy_mode.geometry.1.max(1);
+        // Match tmux: M is `height / 2`, the line just below center when the
+        // page height is even.
+        let screen_line = match line {
+            CopyScreenLine::Top => 0,
+            CopyScreenLine::Middle => height / 2,
+            CopyScreenLine::Bottom => height.saturating_sub(1),
+        };
+        let top = u32::try_from(
+            copy_mode
+                .max_offset_from_bottom
+                .saturating_sub(copy_mode.offset_from_bottom),
+        )
+        .unwrap_or(u32::MAX);
+        let last_row = u32::try_from(
+            copy_mode
+                .max_offset_from_bottom
+                .saturating_add(usize::from(height))
+                .saturating_sub(1),
+        )
+        .unwrap_or(u32::MAX);
+        copy_mode.cursor.row = top.saturating_add(u32::from(screen_line)).min(last_row);
         self.sync_copy_selection();
         outcome.repaint = true;
     }

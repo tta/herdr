@@ -519,6 +519,68 @@ fn keyboard_copy_mode_owns_cursor_selection_copy_and_scroll_restore() {
 }
 
 #[test]
+fn copy_mode_h_m_l_move_within_the_visible_page() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.mode = ClientShellMode::Copy;
+    state.copy_mode = Some(ClientCopyModeState {
+        pane_id: "pane_1".into(),
+        content_revision: 0,
+        geometry: (80, 10),
+        alternate_screen_active: false,
+        cursor: crate::api::schema::PaneTextPoint { row: 18, col: 4 },
+        offset_from_bottom: 5,
+        max_offset_from_bottom: 20,
+        entry_offset_from_bottom: 0,
+        selection: None,
+        search_prompt: None,
+        search_query: String::new(),
+        search_direction: None,
+        search_matches: Vec::new(),
+        search_total: 0,
+        search_current: None,
+        search_current_global: None,
+        search_generation: 0,
+        copy_after_search: false,
+    });
+
+    let press = |state: &mut ClientShellState, key: KeyCode| {
+        state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            key,
+            KeyModifiers::empty(),
+        ))])
+    };
+
+    let top = press(&mut state, KeyCode::Char('H'));
+    assert!(top.actions.is_empty());
+    assert_eq!(
+        state.copy_mode.as_ref().map(|mode| (mode.cursor.row, mode.cursor.col)),
+        Some((15, 4))
+    );
+    assert_eq!(
+        state.copy_mode.as_ref().map(|mode| mode.offset_from_bottom),
+        Some(5)
+    );
+
+    press(&mut state, KeyCode::Char('v'));
+    let middle = press(&mut state, KeyCode::Char('M'));
+    assert!(middle.actions.is_empty());
+    assert_eq!(
+        state.copy_mode.as_ref().map(|mode| mode.cursor.row),
+        Some(20)
+    );
+    let bottom = press(&mut state, KeyCode::Char('L'));
+    assert!(bottom.actions.is_empty());
+    assert_eq!(
+        state.copy_mode.as_ref().map(|mode| mode.cursor.row),
+        Some(24)
+    );
+    assert!(state.selection.as_ref().is_some_and(|selection| {
+        let (start, end) = selection.ordered_cells();
+        start.0 == 15 && end.0 == 24
+    }));
+}
+
+#[test]
 fn keyboard_selections_survive_output_and_copy_live_ranges() {
     // Character and linewise selections have distinct anchor/range projections.
     for selection_key in [b"v", b"V"] {

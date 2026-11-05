@@ -178,7 +178,7 @@ pub(super) fn render_mode_bar(
                     segments.extend([
                         (" COPY ".to_owned(), mode_style),
                         (" ".to_owned(), base),
-                        ("h/j/k/l w/b/e { }".to_owned(), key),
+                        ("h/j/k/l H/M/L w/b/e { }".to_owned(), key),
                         (" move  ".to_owned(), base),
                         ("/ ?".to_owned(), key),
                         (" search  ".to_owned(), base),
