@@ -1,5 +1,157 @@
 use super::*;
 
+fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x && y >= rect.y && x < rect.right() && y < rect.bottom()
+}
+
+fn frame_cell_mut(frame: &mut FrameData, x: u16, y: u16) -> Option<&mut crate::protocol::CellData> {
+    if x >= frame.width || y >= frame.height {
+        return None;
+    }
+    let index = usize::from(y) * usize::from(frame.width) + usize::from(x);
+    frame.cells.get_mut(index)
+}
+
+fn packed_to_rgb(color: u32) -> Option<(u8, u8, u8)> {
+    match color >> 24 {
+        0x02 => Some((
+            ((color >> 16) & 0xFF) as u8,
+            ((color >> 8) & 0xFF) as u8,
+            (color & 0xFF) as u8,
+        )),
+        0x01 => Some(indexed_rgb((color & 0xFF) as u8)),
+        0x00 => named_rgb((color & 0xFF) as u8),
+        _ => None,
+    }
+}
+
+fn named_rgb(index: u8) -> Option<(u8, u8, u8)> {
+    const NAMED: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 49, 49),
+        (13, 188, 121),
+        (229, 229, 16),
+        (36, 114, 200),
+        (188, 63, 188),
+        (17, 168, 205),
+        (229, 229, 229),
+        (102, 102, 102),
+        (241, 76, 76),
+        (35, 209, 139),
+        (245, 245, 67),
+        (59, 142, 234),
+        (214, 112, 214),
+        (41, 184, 219),
+        (255, 255, 255),
+    ];
+    NAMED.get(usize::from(index.checked_sub(1)?)).copied()
+}
+
+fn indexed_rgb(index: u8) -> (u8, u8, u8) {
+    if index < 16 {
+        return named_rgb(index + 1).unwrap_or((0, 0, 0));
+    }
+    if index >= 232 {
+        let level = 8 + (index - 232) * 10;
+        return (level, level, level);
+    }
+    let offset = index - 16;
+    let levels = [0, 95, 135, 175, 215, 255];
+    (
+        levels[usize::from(offset / 36)],
+        levels[usize::from((offset / 6) % 6)],
+        levels[usize::from(offset % 6)],
+    )
+}
+
+fn most_common_background(frame: &FrameData, area: Rect, mode_bar: Option<Rect>) -> Option<u32> {
+    let mut counts: Vec<(u32, u32)> = Vec::new();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if mode_bar.is_some_and(|bar| rect_contains(bar, x, y)) {
+                continue;
+            }
+            let index = usize::from(y) * usize::from(frame.width) + usize::from(x);
+            let Some(cell) = frame.cells.get(index) else {
+                continue;
+            };
+            if let Some(count) = counts.iter_mut().find(|(bg, _)| *bg == cell.bg) {
+                count.1 = count.1.saturating_add(1);
+            } else {
+                counts.push((cell.bg, 1));
+            }
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(bg, _)| bg)
+}
+
+fn mix_toward(color: (u8, u8, u8), target: (u8, u8, u8), amount: f32) -> u32 {
+    let mix = |value: u8, toward: u8| {
+        (f32::from(value) + (f32::from(toward) - f32::from(value)) * amount).round() as u8
+    };
+    crate::protocol::color_to_u32(ratatui::style::Color::Rgb(
+        mix(color.0, target.0),
+        mix(color.1, target.1),
+        mix(color.2, target.2),
+    ))
+}
+
+impl ClientShellState {
+    fn apply_copy_mode_chrome(&self, frame: &mut FrameData, mode_bar: Option<Rect>) {
+        if self.mode != ClientShellMode::Copy {
+            return;
+        }
+        let Some(copy_mode) = self.copy_mode.as_ref() else {
+            return;
+        };
+        let Some(copy_index) = self
+            .hits
+            .panes
+            .iter()
+            .position(|hit| hit.pane_id == copy_mode.pane_id && !hit.popup)
+        else {
+            return;
+        };
+        let bg_fallback = packed_to_rgb(crate::protocol::color_to_u32(self.config.palette.panel_bg))
+            .unwrap_or((24, 24, 37));
+        let copy_area = self.hits.panes[copy_index].inner_rect;
+        self.lift_copy_pane_background(frame, copy_area, mode_bar, bg_fallback);
+    }
+
+    fn lift_copy_pane_background(
+        &self,
+        frame: &mut FrameData,
+        area: Rect,
+        mode_bar: Option<Rect>,
+        bg_fallback: (u8, u8, u8),
+    ) {
+        let Some(default_bg) = most_common_background(frame, area, mode_bar) else {
+            return;
+        };
+        let lifted = mix_toward(
+            packed_to_rgb(default_bg).unwrap_or(bg_fallback),
+            (255, 255, 255),
+            0.18,
+        );
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if mode_bar.is_some_and(|bar| rect_contains(bar, x, y)) {
+                    continue;
+                }
+                if let Some(cell) = frame_cell_mut(frame, x, y) {
+                    if cell.bg == default_bg {
+                        cell.bg = lifted;
+                        cell.skip = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn restore_mode_bar(
     frame: &mut FrameData,
     bar: Option<Rect>,
@@ -345,6 +497,7 @@ impl ClientShellState {
         });
         blit_pane_surface(&mut frame, &surface.frame, layout.pane_surface);
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
+        self.apply_copy_mode_chrome(&mut frame, mode_bar);
         let mut occlusion = crate::kitty_graphics::surface::Occlusion::default();
         let has_selection = self
             .selection

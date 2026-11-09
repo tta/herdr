@@ -1318,6 +1318,157 @@ fn navigator_renders_every_terminal_in_workspace_sections() {
 }
 
 #[test]
+fn copy_mode_leaves_other_panes_and_borders_unchanged() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 10, 3));
+    buffer[(0, 0)].set_symbol("┌");
+    buffer[(2, 1)].set_symbol("A");
+    buffer[(7, 1)].set_symbol("Q");
+    let mut pane_surface = surface();
+    pane_surface.frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+        &buffer,
+        Some(crate::protocol::CursorState {
+            x: 1,
+            y: 1,
+            visible: true,
+            shape: 2,
+        }),
+        &[],
+    );
+    let scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 0,
+        viewport_rows: 1,
+    });
+    pane_surface.panes[0].rect = crate::protocol::SurfaceRect {
+        x: 0,
+        y: 0,
+        width: 5,
+        height: 3,
+    };
+    pane_surface.panes[0].inner_rect = crate::protocol::SurfaceRect {
+        x: 1,
+        y: 1,
+        width: 3,
+        height: 1,
+    };
+    pane_surface.panes[0].scroll = scroll;
+    let mut other = pane_surface.panes[0].clone();
+    other.pane_id = "pane_2".into();
+    other.focused = false;
+    other.rect.x = 5;
+    other.inner_rect.x = 6;
+    pane_surface.panes.push(other);
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("layout");
+    let mut outcome = ClientShellInput::default();
+    assert!(state.enter_copy_mode(&mut outcome));
+    let frame = state.compose(106, 20).expect("copy chrome");
+    let copy_hit = state
+        .hits
+        .panes
+        .iter()
+        .find(|hit| hit.pane_id == "pane_1")
+        .expect("copy pane");
+    let other_hit = state
+        .hits
+        .panes
+        .iter()
+        .find(|hit| hit.pane_id == "pane_2")
+        .expect("other pane");
+    let cell = |frame: &crate::protocol::FrameData, x: u16, y: u16| {
+        &frame.cells[usize::from(y) * usize::from(frame.width) + usize::from(x)]
+    };
+    let border = cell(&frame, copy_hit.rect.x, copy_hit.rect.y);
+    assert_eq!(border.symbol, "┌");
+    assert_ne!(
+        border.fg,
+        crate::protocol::color_to_u32(state.config.palette.yellow)
+    );
+    let other_text = cell(
+        &frame,
+        other_hit.inner_rect.x.saturating_add(1),
+        other_hit.inner_rect.y,
+    );
+    assert_eq!(other_text.symbol, "Q");
+    assert_eq!(other_text.fg, 0);
+    assert_eq!(other_text.bg, 0);
+    let copy_text = cell(
+        &frame,
+        copy_hit.inner_rect.x.saturating_add(1),
+        copy_hit.inner_rect.y,
+    );
+    assert_eq!(copy_text.symbol, "A");
+}
+
+#[test]
+fn copy_mode_lifts_only_the_default_background_of_a_lone_pane() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 4, 2));
+    let default_bg = ratatui::style::Color::Rgb(30, 30, 46);
+    let special_bg = ratatui::style::Color::Rgb(80, 20, 20);
+    for y in 0..2 {
+        for x in 0..4 {
+            buffer[(x, y)].set_style(ratatui::style::Style::default().bg(default_bg));
+        }
+    }
+    buffer[(0, 0)].set_symbol("A");
+    buffer[(1, 0)].set_symbol("B");
+    buffer[(2, 0)].set_symbol("S");
+    buffer[(2, 0)].set_style(ratatui::style::Style::default().bg(special_bg));
+    let mut pane_surface = surface();
+    pane_surface.frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+        &buffer,
+        Some(crate::protocol::CursorState {
+            x: 1,
+            y: 0,
+            visible: true,
+            shape: 2,
+        }),
+        &[],
+    );
+    pane_surface.panes[0].rect = crate::protocol::SurfaceRect {
+        x: 0,
+        y: 0,
+        width: 4,
+        height: 2,
+    };
+    pane_surface.panes[0].inner_rect = pane_surface.panes[0].rect;
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 0,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("layout");
+    let mut outcome = ClientShellInput::default();
+    assert!(state.enter_copy_mode(&mut outcome));
+    let frame = state.compose(106, 20).expect("copy chrome");
+    let hit = state
+        .hits
+        .panes
+        .iter()
+        .find(|hit| hit.pane_id == "pane_1")
+        .expect("pane");
+    let at = |x: u16, y: u16| {
+        &frame.cells[usize::from(hit.rect.y.saturating_add(y)) * usize::from(frame.width)
+            + usize::from(hit.rect.x.saturating_add(x))]
+    };
+    let plain = at(0, 0);
+    let special = at(2, 0);
+    assert_eq!(plain.symbol, "A");
+    assert_ne!(
+        plain.bg,
+        crate::protocol::color_to_u32(default_bg),
+        "the usual background should lighten"
+    );
+    assert_eq!(special.symbol, "S");
+    assert_eq!(special.bg, crate::protocol::color_to_u32(special_bg));
+}
+
+#[test]
 fn navigator_search_matches_non_adjacent_words_without_losing_the_pane_target() {
     let mut projected = snapshot();
     projected.panes[0].label = Some("alpha beta gamma".into());
