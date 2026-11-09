@@ -171,6 +171,12 @@ pub enum ResponseResult {
         cursor: PaneTextPoint,
         content_revision: u64,
     },
+    PaneCopyTextObject {
+        pane_id: String,
+        anchor: PaneTextPoint,
+        cursor: PaneTextPoint,
+        content_revision: u64,
+    },
     PaneCopySearch {
         pane_id: String,
         content_revision: u64,

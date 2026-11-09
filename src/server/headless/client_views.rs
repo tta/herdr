@@ -253,6 +253,7 @@ impl HeadlessServer {
                 | Method::PaneClose(_)
                 | Method::PaneCopyMotion(_)
                 | Method::PaneCopySearch(_)
+                | Method::PaneCopyTextObject(_)
                 | Method::PaneEditScrollback(_)
                 | Method::PaneFocus(_)
                 | Method::PaneFocusDirection(_)

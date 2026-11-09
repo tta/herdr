@@ -118,6 +118,7 @@ fn modal_paste_target_requires_a_focused_editable_client_field() {
         }),
         find_prompt: None,
         last_find: None,
+        object_prompt: None,
         search_query: String::new(),
         search_direction: None,
         search_matches: Vec::new(),

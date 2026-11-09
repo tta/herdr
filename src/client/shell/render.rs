@@ -123,7 +123,20 @@ pub(super) fn render_mode_bar(
             }
             ClientShellMode::Copy => {
                 let copy_mode = copy_mode?;
-                if let Some(prompt) = copy_mode.find_prompt {
+                if let Some(scope) = copy_mode.object_prompt {
+                    let marker = match scope {
+                        ClientCopyObjectScope::Around => "a",
+                        ClientCopyObjectScope::Inner => "i",
+                    };
+                    segments.extend([
+                        (" COPY ".to_owned(), mode_style),
+                        (" ".to_owned(), base),
+                        (marker.to_owned(), key),
+                        (" p paragraph  ".to_owned(), base),
+                        ("esc".to_owned(), key),
+                        (" cancel".to_owned(), base),
+                    ]);
+                } else if let Some(prompt) = copy_mode.find_prompt {
                     let marker = match (prompt.motion, prompt.direction) {
                         (ClientCopyFindMotion::To, ClientCopyFindDirection::Forward) => "f",
                         (ClientCopyFindMotion::To, ClientCopyFindDirection::Backward) => "F",
@@ -193,7 +206,7 @@ pub(super) fn render_mode_bar(
                     segments.extend([
                         (" COPY ".to_owned(), mode_style),
                         (" ".to_owned(), base),
-                        ("h/j/k/l H/M/L f/t w/b/e { }".to_owned(), key),
+                        ("h/j/k/l H/M/L f/t ap/ip w/b/e { }".to_owned(), key),
                         (" move  ".to_owned(), base),
                         ("/ ?".to_owned(), key),
                         (" search  ".to_owned(), base),

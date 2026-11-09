@@ -3465,6 +3465,12 @@ impl PaneRuntime {
         result
     }
 
+    pub(crate) fn paragraph_object_bounds(&self, row: u32, inner: bool) -> Option<(u32, u32)> {
+        let result = self.terminal.paragraph_object_bounds(row, inner);
+        self.compression.wake();
+        result
+    }
+
     #[cfg(unix)]
     pub fn input_state(&self) -> Option<InputState> {
         self.terminal.input_state()

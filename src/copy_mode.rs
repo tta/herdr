@@ -86,6 +86,58 @@ fn copy_find_landing(
     }
 }
 
+pub(crate) fn paragraph_bounds(
+    blank: &[bool],
+    cursor: usize,
+    inner: bool,
+) -> Option<(usize, usize)> {
+    if cursor >= blank.len() {
+        return None;
+    }
+    let mut start = cursor;
+    let mut end = cursor;
+    if blank[cursor] {
+        while start > 0 && blank[start - 1] {
+            start -= 1;
+        }
+        while end + 1 < blank.len() && blank[end + 1] {
+            end += 1;
+        }
+        if !inner {
+            if end + 1 < blank.len() {
+                end += 1;
+                while end + 1 < blank.len() && !blank[end + 1] {
+                    end += 1;
+                }
+            } else if start > 0 {
+                start -= 1;
+                while start > 0 && !blank[start - 1] {
+                    start -= 1;
+                }
+            }
+        }
+    } else {
+        while start > 0 && !blank[start - 1] {
+            start -= 1;
+        }
+        while end + 1 < blank.len() && !blank[end + 1] {
+            end += 1;
+        }
+        if !inner {
+            if end + 1 < blank.len() && blank[end + 1] {
+                while end + 1 < blank.len() && blank[end + 1] {
+                    end += 1;
+                }
+            } else if start > 0 && blank[start - 1] {
+                while start > 0 && blank[start - 1] {
+                    start -= 1;
+                }
+            }
+        }
+    }
+    Some((start, end))
+}
+
 pub(crate) fn first_non_blank_col(text: &str) -> Option<u16> {
     let mut col = 0u16;
     for ch in text.chars() {
@@ -195,6 +247,18 @@ mod tests {
         assert_eq!(find(&text, 1, 'X', false, true, true), None);
         assert_eq!(find(&text, 0, 'Z', true, false, false), None);
         assert_eq!(find(&text, 0, 'a', true, false, false), None);
+    }
+
+    #[test]
+    fn paragraph_object_includes_the_separator_only_for_ap() {
+        let blank = [true, false, false, true, false];
+        assert_eq!(super::paragraph_bounds(&blank, 1, true), Some((1, 2)));
+        assert_eq!(super::paragraph_bounds(&blank, 2, false), Some((1, 3)));
+        assert_eq!(super::paragraph_bounds(&blank, 4, true), Some((4, 4)));
+        assert_eq!(super::paragraph_bounds(&blank, 4, false), Some((3, 4)));
+        assert_eq!(super::paragraph_bounds(&blank, 0, true), Some((0, 0)));
+        assert_eq!(super::paragraph_bounds(&blank, 0, false), Some((0, 2)));
+        assert_eq!(super::paragraph_bounds(&blank, 3, false), Some((3, 4)));
     }
 
     #[test]

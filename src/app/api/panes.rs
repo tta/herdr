@@ -404,6 +404,60 @@ impl App {
         )
     }
 
+    pub(super) fn handle_pane_copy_text_object(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneCopyTextObjectParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let before = runtime.content_seq();
+        if params
+            .content_revision
+            .is_some_and(|revision| revision != before || !before.is_multiple_of(2))
+        {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let bounds = match params.kind {
+            crate::api::schema::PaneCopyTextObjectKind::Paragraph => {
+                runtime.paragraph_object_bounds(params.cursor.row, params.inner)
+            }
+        };
+        let Some((start_row, end_row)) = bounds else {
+            return encode_error(
+                id,
+                "copy_motion_unavailable",
+                "paragraph is unavailable",
+            );
+        };
+        let after = runtime.content_seq();
+        if params.content_revision.is_some() && after != before {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        encode_success(
+            id,
+            ResponseResult::PaneCopyTextObject {
+                pane_id: params.pane_id,
+                anchor: crate::api::schema::PaneTextPoint {
+                    row: start_row,
+                    col: 0,
+                },
+                cursor: crate::api::schema::PaneTextPoint {
+                    row: end_row,
+                    col: 0,
+                },
+                content_revision: after,
+            },
+        )
+    }
+
     pub(super) fn handle_pane_copy_search(
         &mut self,
         id: String,
@@ -2654,6 +2708,27 @@ mod tests {
             ResponseResult::PaneCopyMotion {
                 pane_id: public_pane_id,
                 cursor: PaneTextPoint { row: 1, col: 2 },
+                content_revision: 0,
+            }
+        );
+
+        let response = app.handle_pane_copy_text_object(
+            "req".into(),
+            crate::api::schema::PaneCopyTextObjectParams {
+                pane_id: public_pane_id.clone(),
+                cursor: PaneTextPoint { row: 0, col: 2 },
+                kind: crate::api::schema::PaneCopyTextObjectKind::Paragraph,
+                inner: false,
+                content_revision: None,
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            success.result,
+            ResponseResult::PaneCopyTextObject {
+                pane_id: public_pane_id,
+                anchor: PaneTextPoint { row: 0, col: 0 },
+                cursor: PaneTextPoint { row: 1, col: 0 },
                 content_revision: 0,
             }
         );

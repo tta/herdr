@@ -758,6 +758,43 @@ impl ClientShellState {
                 self.complete_copy_operation(session_generation, continue_queue, &mut outcome);
                 return (repaint || outcome.repaint, outcome.actions);
             }
+            PendingEndpointKind::CopyParagraph {
+                pane_id,
+                origin,
+                session_generation,
+            } => {
+                let mut outcome = ClientShellInput::default();
+                let (repaint, continue_queue) = match result {
+                    Ok(crate::api::schema::ResponseResult::PaneCopyTextObject {
+                        pane_id: returned_pane_id,
+                        anchor,
+                        cursor,
+                        content_revision,
+                    }) if returned_pane_id == pane_id => (
+                        self.apply_copy_paragraph(
+                            &pane_id,
+                            origin,
+                            anchor.row,
+                            cursor.row,
+                            content_revision,
+                            &mut outcome,
+                        ),
+                        true,
+                    ),
+                    Ok(crate::api::schema::ResponseResult::PaneCopyTextObject { .. }) => {
+                        (false, false)
+                    }
+                    Ok(_) => {
+                        self.set_endpoint_error(
+                            "endpoint returned an unexpected copy-object result",
+                        );
+                        (true, false)
+                    }
+                    Err(_) => (true, false),
+                };
+                self.complete_copy_operation(session_generation, continue_queue, &mut outcome);
+                return (repaint || outcome.repaint, outcome.actions);
+            }
             PendingEndpointKind::CopySearch {
                 pane_id,
                 origin,

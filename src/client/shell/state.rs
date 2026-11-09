@@ -665,6 +665,11 @@ pub(super) enum PendingEndpointKind {
         origin: crate::api::schema::PaneTextPoint,
         session_generation: u64,
     },
+    CopyParagraph {
+        pane_id: String,
+        origin: crate::api::schema::PaneTextPoint,
+        session_generation: u64,
+    },
     CopySearch {
         pane_id: String,
         origin: crate::api::schema::PaneTextPoint,
@@ -835,6 +840,12 @@ pub(super) struct ClientCopyFindPrompt {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientCopyObjectScope {
+    Around,
+    Inner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ClientCopyFind {
     pub(super) needle: char,
     pub(super) motion: ClientCopyFindMotion,
@@ -844,6 +855,7 @@ pub(super) struct ClientCopyFind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ClientCopyOperation {
     Motion(crate::api::schema::PaneCopyMotion),
+    Paragraph { inner: bool },
     Search {
         query: String,
         direction: crate::api::schema::PaneCopySearchDirection,
@@ -873,6 +885,7 @@ pub(super) struct ClientCopyModeState {
     pub(super) search_prompt: Option<ClientCopySearchPrompt>,
     pub(super) find_prompt: Option<ClientCopyFindPrompt>,
     pub(super) last_find: Option<ClientCopyFind>,
+    pub(super) object_prompt: Option<ClientCopyObjectScope>,
     pub(super) search_query: String,
     pub(super) search_direction: Option<crate::api::schema::PaneCopySearchDirection>,
     pub(super) search_matches: Vec<crate::api::schema::PaneTextRange>,

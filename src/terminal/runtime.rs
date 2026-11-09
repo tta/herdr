@@ -323,6 +323,10 @@ impl TerminalRuntime {
         self.0.paragraph_motion_target(row, direction)
     }
 
+    pub(crate) fn paragraph_object_bounds(&self, row: u32, inner: bool) -> Option<(u32, u32)> {
+        self.0.paragraph_object_bounds(row, inner)
+    }
+
     pub fn bracketed_paste_enabled(&self) -> bool {
         self.0.bracketed_paste_enabled()
     }

@@ -406,12 +406,7 @@ impl PaneTerminal {
                 .screen_text_rows_range(candidate, candidate.saturating_add(1))
                 .ok()?;
             let row = rows.first()?;
-            let is_blank = row.cells.iter().all(|cell| {
-                terminal_cell_text(&cell.graphemes)
-                    .chars()
-                    .all(char::is_whitespace)
-            });
-            if is_blank {
+            if screen_row_is_blank(row) {
                 return Some(TerminalTextPoint {
                     row: u32::try_from(candidate).ok()?,
                     col: 0,
@@ -419,6 +414,42 @@ impl PaneTerminal {
             }
         }
         None
+    }
+
+    pub(crate) fn paragraph_object_bounds(&self, row: u32, inner: bool) -> Option<(u32, u32)> {
+        let core = self.ghostty.core.lock().ok()?;
+        let total_rows = core.terminal.total_rows().ok()?;
+        let current = usize::try_from(row).ok()?;
+        if current >= total_rows {
+            return None;
+        }
+        let mut radius = 64usize;
+        let (start, rel_start, rel_end) = loop {
+            let start = current.saturating_sub(radius);
+            let end = current
+                .saturating_add(radius)
+                .saturating_add(1)
+                .min(total_rows);
+            let rows = core.terminal.screen_text_rows_range(start, end).ok()?;
+            if rows.len() != end.saturating_sub(start) {
+                return None;
+            }
+            let blank = rows.iter().map(screen_row_is_blank).collect::<Vec<_>>();
+            let (rel_start, rel_end) =
+                crate::copy_mode::paragraph_bounds(&blank, current - start, inner)?;
+            let clipped_top = rel_start == 0 && start > 0;
+            let clipped_bottom = rel_end + 1 == blank.len() && end < total_rows;
+            let next_radius = radius.saturating_mul(2).min(1000);
+            if (clipped_top || clipped_bottom) && next_radius > radius {
+                radius = next_radius;
+                continue;
+            }
+            break (start, rel_start, rel_end);
+        };
+        Some((
+            u32::try_from(start + rel_start).ok()?,
+            u32::try_from(start + rel_end).ok()?,
+        ))
     }
 
     fn retained_text_buffer(&self) -> Option<(RetainedTextBuffer, crate::ghostty::ActiveScreen)> {
@@ -1117,6 +1148,14 @@ impl RetainedTextBuffer {
             .find(|atom| atom.point.is_some())
             .is_some_and(|atom| atom.point == Some(point))
     }
+}
+
+fn screen_row_is_blank(row: &crate::ghostty::ScreenTextRow) -> bool {
+    row.cells.iter().all(|cell| {
+        terminal_cell_text(&cell.graphemes)
+            .chars()
+            .all(char::is_whitespace)
+    })
 }
 
 fn terminal_cell_text(graphemes: &[u32]) -> String {

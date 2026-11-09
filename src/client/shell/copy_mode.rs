@@ -96,6 +96,7 @@ impl ClientShellState {
             search_prompt: None,
             find_prompt: None,
             last_find: None,
+            object_prompt: None,
             search_query: String::new(),
             search_direction: None,
             search_matches: Vec::new(),
@@ -115,6 +116,9 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         if self.route_copy_find_prompt_key(key, outcome) {
+            return;
+        }
+        if self.route_copy_object_prompt_key(key, outcome) {
             return;
         }
         if self.route_copy_search_prompt_key(key, outcome) {
@@ -249,6 +253,8 @@ impl ClientShellState {
             ),
             ';' => self.repeat_copy_find(false, outcome),
             ',' => self.repeat_copy_find(true, outcome),
+            'a' => self.open_copy_object(ClientCopyObjectScope::Around),
+            'i' => self.open_copy_object(ClientCopyObjectScope::Inner),
             '0' => {
                 self.set_copy_cursor_col(0);
                 self.sync_copy_selection();
@@ -343,6 +349,67 @@ impl ClientShellState {
         );
         outcome.repaint = true;
         true
+    }
+
+    fn route_copy_object_prompt_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        if self
+            .copy_mode
+            .as_ref()
+            .is_none_or(|copy_mode| copy_mode.object_prompt.is_none())
+        {
+            return false;
+        }
+        if key.code == KeyCode::Esc {
+            if let Some(copy_mode) = self.copy_mode.as_mut() {
+                copy_mode.object_prompt = None;
+            }
+            outcome.repaint = true;
+            return true;
+        }
+        let Some(command) = crate::copy_mode::copy_mode_command_char(key.clone()) else {
+            if let Some(copy_mode) = self.copy_mode.as_mut() {
+                copy_mode.object_prompt = None;
+            }
+            outcome.repaint = true;
+            return true;
+        };
+        if command != 'p' {
+            if let Some(copy_mode) = self.copy_mode.as_mut() {
+                copy_mode.object_prompt = None;
+            }
+            outcome.repaint = true;
+            return true;
+        }
+        let Some(scope) = self
+            .copy_mode
+            .as_mut()
+            .and_then(|copy_mode| copy_mode.object_prompt.take())
+        else {
+            return true;
+        };
+        self.request_copy_paragraph(scope == ClientCopyObjectScope::Inner, outcome);
+        outcome.repaint = true;
+        true
+    }
+
+    fn open_copy_object(&mut self, scope: ClientCopyObjectScope) {
+        let Some(copy_mode) = self.copy_mode.as_mut() else {
+            return;
+        };
+        copy_mode.object_prompt = Some(scope);
+    }
+
+    fn request_copy_paragraph(&mut self, inner: bool, outcome: &mut ClientShellInput) {
+        if self.copy_mode.is_none() {
+            return;
+        }
+        self.copy_operation_queue
+            .push_back(ClientCopyOperation::Paragraph { inner });
+        self.dispatch_next_copy_operation(outcome);
     }
 
     fn open_copy_find(
@@ -940,6 +1007,22 @@ impl ClientShellState {
             let pane_id = copy_mode.pane_id.clone();
             let origin = copy_mode.cursor;
             let (method, kind) = match operation {
+                ClientCopyOperation::Paragraph { inner } => (
+                    crate::api::schema::Method::PaneCopyTextObject(
+                        crate::api::schema::PaneCopyTextObjectParams {
+                            pane_id: pane_id.clone(),
+                            cursor: origin,
+                            kind: crate::api::schema::PaneCopyTextObjectKind::Paragraph,
+                            inner,
+                            content_revision: Some(copy_mode.content_revision),
+                        },
+                    ),
+                    PendingEndpointKind::CopyParagraph {
+                        pane_id,
+                        origin,
+                        session_generation,
+                    },
+                ),
                 ClientCopyOperation::Motion(motion) => (
                     crate::api::schema::Method::PaneCopyMotion(
                         crate::api::schema::PaneCopyMotionParams {
@@ -1024,6 +1107,50 @@ impl ClientShellState {
         copy_mode.cursor = cursor;
         self.reveal_copy_cursor(outcome, false);
         self.sync_copy_selection();
+        outcome.repaint = true;
+        true
+    }
+
+    pub(super) fn apply_copy_paragraph(
+        &mut self,
+        pane_id: &str,
+        origin: crate::api::schema::PaneTextPoint,
+        anchor_row: u32,
+        end_row: u32,
+        content_revision: u64,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let width = self
+            .copy_hit()
+            .map(|hit| hit.inner_rect.width)
+            .or_else(|| self.copy_mode.as_ref().map(|copy_mode| copy_mode.geometry.0));
+        let Some(copy_mode) = self.copy_mode.as_mut() else {
+            return false;
+        };
+        if copy_mode.pane_id != pane_id
+            || copy_mode.cursor != origin
+            || copy_mode.content_revision != content_revision
+        {
+            return false;
+        }
+        let (start_row, end_row) = if anchor_row <= end_row {
+            (anchor_row, end_row)
+        } else {
+            (end_row, anchor_row)
+        };
+        copy_mode.cursor.row = end_row;
+        copy_mode.cursor.col = 0;
+        copy_mode.selection = Some(ClientCopySelection::Linewise {
+            anchor_row: start_row,
+        });
+        let end_col = width.unwrap_or(copy_mode.geometry.0).saturating_sub(1);
+        self.selection = Some(crate::selection::Selection::line_range(
+            copy_mode.pane_id.clone(),
+            start_row,
+            end_row,
+            end_col,
+        ));
+        self.reveal_copy_cursor(outcome, false);
         outcome.repaint = true;
         true
     }

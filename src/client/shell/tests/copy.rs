@@ -30,6 +30,7 @@ fn pasted_help_and_copy_queries_normalize_single_line_text() {
         selection: None,
         find_prompt: None,
         last_find: None,
+        object_prompt: None,
         search_prompt: Some(ClientCopySearchPrompt {
             direction: crate::api::schema::PaneCopySearchDirection::Forward,
             query: TextEditor::default(),
@@ -537,6 +538,7 @@ fn copy_mode_h_m_l_move_within_the_visible_page() {
         search_prompt: None,
         find_prompt: None,
         last_find: None,
+        object_prompt: None,
         search_query: String::new(),
         search_direction: None,
         search_matches: Vec::new(),
@@ -619,6 +621,7 @@ fn copy_mode_find_char_repeats_forward_and_backward() {
         search_prompt: None,
         find_prompt: None,
         last_find: None,
+        object_prompt: None,
         search_query: String::new(),
         search_direction: None,
         search_matches: Vec::new(),
@@ -866,6 +869,73 @@ fn keyboard_copy_mode_content_motion_is_endpoint_backed_and_stale_safe() {
         state.copy_mode.as_ref().map(|mode| mode.cursor.col),
         Some(3)
     );
+}
+
+#[test]
+fn copy_mode_vap_selects_the_paragraph_from_the_endpoint() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 0,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let mut enter = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::CopyMode),
+        &mut enter,
+    );
+    let origin = state.copy_mode.as_ref().expect("copy mode").cursor;
+
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Char('v'),
+        KeyModifiers::empty(),
+    ))]);
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Char('a'),
+        KeyModifiers::empty(),
+    ))]);
+    assert!(state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|mode| mode.object_prompt == Some(ClientCopyObjectScope::Around)));
+    let motion = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Char('p'),
+        KeyModifiers::empty(),
+    ))]);
+    let [ClientShellAction::Endpoint { request, .. }] = &motion.actions[..] else {
+        panic!("paragraph object should use endpoint semantics");
+    };
+    let request_id = request.id.clone();
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneCopyTextObject(params)
+            if params.cursor == origin
+                && params.kind == crate::api::schema::PaneCopyTextObjectKind::Paragraph
+                && !params.inner
+    ));
+    let (repaint, _) = state.handle_endpoint_result(
+        "boot-1",
+        &request_id,
+        Ok(crate::api::schema::ResponseResult::PaneCopyTextObject {
+            pane_id: "pane_1".into(),
+            anchor: crate::api::schema::PaneTextPoint { row: 4, col: 0 },
+            cursor: crate::api::schema::PaneTextPoint { row: 6, col: 0 },
+            content_revision: 0,
+        }),
+    );
+    assert!(repaint);
+    assert!(state.selection.as_ref().is_some_and(|selection| {
+        let (start, end) = selection.ordered_cells();
+        start.0 == 4 && end.0 == 6
+    }));
+    assert!(state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|mode| mode.object_prompt.is_none()));
 }
 
 #[test]
